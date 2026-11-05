@@ -1,14 +1,14 @@
-import json, random, os
+import json, random, os, asyncio
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, CallbackQueryHandler
+from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
 
-TOKEN = "9218454434:AAGM9fF85XyqZ26UkNAHBijA-Op5DijAU0c"
+TOKEN = os.getenv("BOT_TOKEN")
 
 LINKS = [
-    "https://whatsapp.com/channel/0029VbEN1ghKbYMV6vRhr407",
+    "https://whatsapp.com/channel/0029Vb...",
     "https://t.me/jk_coins",
-    "https://youtube.com/@jungkookjeon40330?si=kPk-qdcINbMZrOPf",
-    "https://www.tiktok.com/@justmeet06",
+    "https://youtube.com/@jungkookjeon...",
+    "https://www.tiktok.com/@justmeet...",
     "https://t.me/update_3334",
 ]
 
@@ -16,7 +16,7 @@ DB_FILE = "users.json"
 
 def load():
     if os.path.exists(DB_FILE):
-        with open(DB_FILE) as f:
+        with open(DB_FILE, "r") as f:
             return json.load(f)
     return {}
 
@@ -24,92 +24,96 @@ def save(data):
     with open(DB_FILE, "w") as f:
         json.dump(data, f)
 
-def get_user(data, uid):
-    uid = str(uid)
+def get_user(data, user_id, username=""):
+    uid = str(user_id)
     if uid not in data:
-        data[uid] = {"balance": 0, "spins": 3, "referred": [], "followed": False, "username": ""}
+        data[uid] = {"balance": 0, "referred": [], "followed": False, "username": username}
+        save(data)
     return data[uid]
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = load()
     user = update.effective_user
-    me = get_user(data, user.id)
-    me["username"] = user.username or user.first_name
+    me = get_user(data, user.id, user.username or "")
+
+    # Referral: /start 123456789
     if context.args:
-        referrer_id = str(context.args[0])
-        if referrer_id != str(user.id) and referrer_id in data:
-            ref = data[referrer_id]
-            if str(user.id) not in ref["referred"]:
-                ref["referred"].append(str(user.id))
-                ref["spins"] += 1
-                await context.bot.send_message(chat_id=int(referrer_id), text=f"New person join with your link! You don get +1 Spin. Spins: {ref['spins']}. Referrals: {len(ref['referred'])}")
-    save(data)
+        try:
+            referrer_id = str(context.args[0])
+            if referrer_id != str(user.id) and referrer_id in data:
+                if str(user.id) not in data[referrer_id]["referred"]:
+                    data[referrer_id]["referred"].append(str(user.id))
+                    data[referrer_id]["balance"] += 1000
+                    save(data)
+        except:
+            pass
+
+    keyboard = [
+        [InlineKeyboardButton("✅ I don follow all", callback_data="check_follow")],
+        [InlineKeyboardButton("💰 Balance", callback_data="balance")],
+        [InlineKeyboardButton("👥 Referral", callback_data="referral")],
+        [InlineKeyboardButton("💸 Withdraw", callback_data="withdraw")],
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
     text = (
-        f"Welcome {user.first_name} to JK SPIN BOT\n\n"
-        f"Balance: {me['balance']} / 10000\n"
-        f"Spins Left: {me['spins']}\n"
-        f"Referrals: {len(me['referred'])} / 5\n\n"
-        f"HOW E DEY WORK:\n"
-        f"1. Spin to win till you reach 10000 = 100,000 Naira\n"
-        f"2. You get 3 free spins\n"
-        f"3. 1 Invite = 1 Extra Spin\n"
-        f"4. Follow 5 links + Refer 5 people before withdraw\n\n"
-        f"Your Invite Link:\nhttps://t.me/{context.bot.username}?start={user.id}"
+        f"Welcome {user.first_name} to JK Coins Bot! 🪙\n\n"
+        f"Follow all our channels to earn.\n"
+        f"Invite friends to earn 1000 per referral.\n\n"
+        f"Your Balance: {me['balance']}\n"
+        f"Your Referrals: {len(me['referred'])}\n\n"
+        f"Links to follow:\n" + "\n".join(LINKS)
     )
-    kb = [[InlineKeyboardButton("SPIN NOW", callback_data="spin")],
-          [InlineKeyboardButton("FOLLOW 5 LINKS", callback_data="tasks")],
-          [InlineKeyboardButton("BALANCE", callback_data="balance")],
-          [InlineKeyboardButton("WITHDRAW", callback_data="withdraw")]]
-    await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(kb))
+    await update.message.reply_text(text, reply_markup=reply_markup)
 
 async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
     data = load()
-    me = get_user(data, q.from_user.id)
-    if q.data == "spin":
-        if me["spins"] <= 0:
-            await q.edit_message_text(f"No spin left! Invite 1 person = 1 spin.\nYour link: https://t.me/{context.bot.username}?start={q.from_user.id}")
-            return
-        me["spins"] -= 1
-        win = random.randint(100, 800)
-        me["balance"] += win
+    me = get_user(data, q.from_user.id, q.from_user.username or "")
+
+    if q.data == "balance":
+        await q.edit_message_text(f"Balance: {me['balance']} 🪙\nReferrals: {len(me['referred'])}")
+        return
+
+    if q.data == "referral":
+        link = f"https://t.me/{context.bot.username}?start={q.from_user.id}"
+        await q.edit_message_text(f"Your referral link:\n{link}\n\nShare am, you go get 1000 per person.")
+        return
+
+    if q.data == "check_follow":
+        me["followed"] = True
         save(data)
-        await q.edit_message_text(f"You spin... You win +{win} points!\n\nBalance: {me['balance']} / 10000\nSpins Left: {me['spins']}", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("SPIN AGAIN", callback_data="spin")]]))
-    elif q.data == "tasks":
-        txt = "Follow all 5 links, then come back:\n\n"
-        for i, l in enumerate(LINKS, 1):
-            txt += f"{i}. {l}\n"
-        txt += "\nAfter you follow all, type /done"
-        await q.edit_message_text(txt)
-    elif q.data == "balance":
-        await q.edit_message_text(f"Balance: {me['balance']} / 10000\nSpins: {me['spins']}\nReferrals: {len(me['referred'])} / 5")
-    elif q.data == "withdraw":
+        await q.edit_message_text("Good! You don follow. Now use /done to confirm.")
+        return
+
+    if q.data == "withdraw":
         if me["balance"] < 10000:
-            await q.edit_message_text(f"You never reach 10000 yet. You get {me['balance']}. Keep spinning!")
+            await q.edit_message_text(f"Balance too low. You get {me['balance']}, you need 10000 to withdraw.")
             return
         if len(me["referred"]) < 5:
-            await q.edit_message_text(f"You need 5 referrals to withdraw. You get {len(me['referred'])} now.")
+            await q.edit_message_text(f"You need 5 referrals. You get {len(me['referred'])} now.")
             return
         if not me["followed"]:
-            await q.edit_message_text("You never follow the 5 links yet. Click FOLLOW 5 LINKS, follow all, then type /done")
+            await q.edit_message_text("You never follow all channels. Follow first then click /done.")
             return
-        await q.edit_message_text("You don qualify! Send your account details like this:\n\nBank - Account Number - Account Name\n\nExample: Opay - 1234567890 - John Doe")
+        await q.edit_message_text("You don qualify for withdraw! Send your wallet / account details to admin.")
+        return
 
 async def done(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = load()
-    me = get_user(data, update.effective_user.id)
+    me = get_user(data, update.effective_user.id, update.effective_user.username or "")
     me["followed"] = True
     save(data)
-    await update.message.reply_text("Good! We don mark say you don follow the 5 links. Now go spin and refer.")
+    await update.message.reply_text("Good! You don follow all channels. ✅\nNow you fit check Balance / Withdraw.")
 
-def main():
+async def main():
     app = ApplicationBuilder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("done", done))
     app.add_handler(CallbackQueryHandler(button))
     print("Bot dey run...")
-    app.run_polling()
+    await app.run_polling()
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
