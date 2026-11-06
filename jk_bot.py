@@ -13,7 +13,7 @@ from telegram.ext import (
 # BOT CONFIGURATION
 # =========================
 
-TOKEN = os.getenv("BOT_TOKEN")
+TOKEN = os.getenv("BOT_TOKEN", "").strip()
 
 DB_FILE = "users.json"
 
