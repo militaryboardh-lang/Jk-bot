@@ -1,7 +1,8 @@
 import json, random, os
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, CallbackQueryHandler
-
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
 TOKEN = os.environ.get("BOT_TOKEN")
 ADMIN_ID = os.environ.get("ADMIN_ID")
 
@@ -105,11 +106,23 @@ async def done(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Good! We don mark say you don follow the 5 links. Now go spin and refer.")
 
 import asyncio
+class Handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"JK Bot is alive!")
+    def log_message(self, *args):
+        pass
 
+def keep_alive():
+    port = int(os.environ.get("PORT", 10000))
+    HTTPServer(("0.0.0.0", port), Handler).serve_forever()
+    
 async def main():
     if not TOKEN:
         print("ERROR: BOT_TOKEN no dey for Environment Variables")
         return
+    threading.Thread(target=keep_alive, daemon=True).start()
     app = ApplicationBuilder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("done", done))
