@@ -1,265 +1,124 @@
 import os
-import json
 import random
-import time
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import (
-    ApplicationBuilder,
-    CommandHandler,
-    CallbackQueryHandler,
-    ContextTypes
-)
+from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
 
-# =========================
-# BOT CONFIGURATION
-# =========================
+# --- FAKE WEB SERVER FOR RENDER FREE ---
+class Handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"JK Bot is alive!")
+    def log_message(self, *args):
+        pass
 
-TOKEN = os.getenv("BOT_TOKEN", "").strip()
+def keep_alive():
+    port = int(os.environ.get("PORT", 10000))
+    server = HTTPServer(("0.0.0.0", port), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
 
-DB_FILE = "users.json"
+keep_alive()
 
-REFERRAL_REWARD = 1000
-MIN_WITHDRAWAL = 10000
-MIN_REFERRALS = 3
-SPIN_COOLDOWN = 60
+# --- CONFIG ---
+BOT_TOKEN = os.environ.get("BOT_TOKEN")
+REQUIRED_CHANNELS = ["@jkcoinschannel", "@jkcoinsgroup"]  # CHANGE AM
+CHANNEL_LINKS = ["https://t.me/jkcoinschannel", "https://t.me/jkcoinsgroup"] # CHANGE AM
 
-# =========================
-# CHANNEL LINKS
-# =========================
-
-LINKS = [
-    "Follow the Jk Coin channel on WhatsApp: https://whatsapp.com/channel/0029VbEN1ghKbYMV6vRhr407",
-    "https://t.me/jk_coins",
-    "https://youtube.com/@jungkookjeon...",
-    "https://www.tiktok.com/@justmeet...",
-    "https://t.me/update_3334",
+users = {}
+# Quiz questions
+QUIZ = [
+    ("What is the capital of Nigeria?", "Abuja", ["Lagos", "Abuja", "Kano", "Port Harcourt"]),
+    ("2 + 2 x 2 = ?", "6", ["4", "6", "8", "10"]),
+    ("Which coin is JK Coins?", "JK", ["BTC", "JK", "ETH", "DOGE"]),
+    ("What colour is the sky?", "Blue", ["Red", "Blue", "Green", "Yellow"]),
 ]
 
-# =========================
-# DATABASE
-# =========================
+def get_user(user_id, username):
+    if user_id not in users:
+        users[user_id] = {"username": username, "balance": 0, "referrals": 0}
+    return users[user_id]
 
-def load():
-    if os.path.exists(DB_FILE):
+async def check_joined(context, user_id):
+    for ch in REQUIRED_CHANNELS:
         try:
-            with open(DB_FILE, "r") as f:
-                return json.load(f)
-        except (json.JSONDecodeError, OSError):
-            print("Database could not be loaded.")
-    return {}
+            member = await context.bot.get_chat_member(ch, user_id)
+            if member.status in ["left", "kicked", "banned"]:
+                return False
+        except:
+            return False
+    return True
 
-def save(data):
-    temporary_file = DB_FILE + ".tmp"
-    with open(temporary_file, "w") as f:
-        json.dump(data, f, indent=4)
-    os.replace(temporary_file, DB_FILE)
+async def show_join_message(query_or_update, context, is_query=False):
+    keyboard = []
+    for i, link in enumerate(CHANNEL_LINKS):
+        keyboard.append([InlineKeyboardButton(f"📢 Join Channel {i+1}", url=link)])
+    keyboard.append([InlineKeyboardButton("✅ I Have Joined - Verify Me", callback_data="verify_join")])
+    markup = InlineKeyboardMarkup(keyboard)
+    text = "⛔ STRICT RULE: You MUST join all our channels to use JK Coins Bot.\n\n1. Join all.\n2. Tap 'I Have Joined'."
+    if is_query:
+        await query_or_update.edit_message_text(text, reply_markup=markup)
+    else:
+        await query_or_update.message.reply_text(text, reply_markup=markup)
 
-def get_user(data, user_id, username=""):
-    uid = str(user_id)
-    if uid not in data:
-        data[uid] = {
-            "balance": 0,
-            "referred": [],
-            "followed": False,
-            "username": username,
-            "last_spin": 0
-        }
-        save(data)
-    if "last_spin" not in data[uid]:
-        data[uid]["last_spin"] = 0
-    return data[uid]
-
-def main_menu_keyboard():
-    keyboard = [
-        [InlineKeyboardButton("✅ I don follow all", callback_data="check_follow")],
-        [InlineKeyboardButton("💰 Balance", callback_data="balance")],
-        [InlineKeyboardButton("👥 Referral", callback_data="referral")],
-        [InlineKeyboardButton("🎡 Spin", callback_data="spin")],
+def main_menu():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("💰 My Balance", callback_data="balance")],
+        [InlineKeyboardButton("🎁 Earn Coins", callback_data="earn")],
+        [InlineKeyboardButton("🎮 Play Games", callback_data="games")],
+        [InlineKeyboardButton("👥 Refer & Earn", callback_data="refer")],
         [InlineKeyboardButton("💸 Withdraw", callback_data="withdraw")],
-    ]
-    return InlineKeyboardMarkup(keyboard)
+    ])
 
-def back_keyboard():
-    return InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Back to Menu", callback_data="menu")]])
-
-# =========================
-# START / MENU COMMAND
-# =========================
+def games_menu():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🎲 Dice Game", callback_data="game_dice")],
+        [InlineKeyboardButton("🪙 Coin Flip", callback_data="game_coin")],
+        [InlineKeyboardButton("🎡 Spin Wheel", callback_data="game_spin")],
+        [InlineKeyboardButton("🔢 Guess Number", callback_data="game_guess")],
+        [InlineKeyboardButton("🧠 Quiz Game", callback_data="game_quiz")],
+        [InlineKeyboardButton("⬅️ Back", callback_data="back")],
+    ])
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    data = load()
     user = update.effective_user
-    me = get_user(data, user.id, user.username or "")
-
+    data = get_user(user.id, user.username or user.first_name)
+    if not await check_joined(context, user.id):
+        await show_join_message(update, context, is_query=False)
+        return
     if context.args:
-        referrer_id = str(context.args[0])
-        user_id = str(user.id)
-        if (
-            referrer_id != user_id
-            and referrer_id in data
-            and user_id not in data[referrer_id]["referred"]
-        ):
-            data[referrer_id]["referred"].append(user_id)
-            data[referrer_id]["balance"] += REFERRAL_REWARD
-            save(data)
-
-    text = (
-        f"Welcome {user.first_name} to JK Coins Bot! 🪙\n\n"
-        "Follow all our channels to earn.\n"
-        "Invite friends and earn 1,000 coins per referral.\n\n"
-        f"Your Balance: {me['balance']} 🪙\n"
-        f"Your Referrals: {len(me['referred'])}\n\n"
-        "Links to follow:\n"
-        + "\n".join(LINKS)
+        try:
+            ref_id = int(context.args[0])
+            if ref_id != user.id and ref_id in users:
+                users[ref_id]["balance"] += 50
+                users[ref_id]["referrals"] += 1
+        except:
+            pass
+    await update.message.reply_text(
+        f"Welcome to JK Coins Bot, {user.first_name}! 🪙\n\nBalance: {data['balance']} JK Coins\nReferrals: {data['referrals']}\n\nPlay games to earn more!",
+        reply_markup=main_menu()
     )
-    await update.message.reply_text(text, reply_markup=main_menu_keyboard())
 
-# =========================
-# BUTTON HANDLER
-# =========================
-
-async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    data = load()
     user = query.from_user
-    me = get_user(data, user.id, user.username or "")
+    data = get_user(user.id, user.username or user.first_name)
 
-    if query.data == "menu":
-        text = (
-            f"Welcome {user.first_name} to JK Coins Bot! 🪙\n\n"
-            "Follow all our channels to earn.\n"
-            "Invite friends and earn 1,000 coins per referral.\n\n"
-            f"Your Balance: {me['balance']} 🪙\n"
-            f"Your Referrals: {len(me['referred'])}\n\n"
-            "Links to follow:\n"
-            + "\n".join(LINKS)
-        )
-        await query.edit_message_text(text, reply_markup=main_menu_keyboard())
-        return
-
-    if query.data == "balance":
-        await query.edit_message_text(
-            f"💰 Your Balance: {me['balance']} coins\n\n"
-            f"👥 Total Referrals: {len(me['referred'])}",
-            reply_markup=back_keyboard()
-        )
-        return
-
-    if query.data == "referral":
-        bot_info = await context.bot.get_me()
-        link = f"https://t.me/{bot_info.username}?start={user.id}"
-        await query.edit_message_text(
-            "👥 YOUR REFERRAL LINK\n\n"
-            f"{link}\n\n"
-            "Share this link with your friends.\n"
-            "You earn 1,000 coins for every successful referral. 🪙",
-            reply_markup=back_keyboard()
-        )
-        return
-
-    if query.data == "spin":
-        now = int(time.time())
-        remaining = SPIN_COOLDOWN - (now - me.get("last_spin", 0))
-        if remaining > 0:
-            await query.edit_message_text(
-                f"⏳ Wait {remaining} seconds before you spin again!\n\n"
-                f"Your Balance: {me['balance']} coins",
-                reply_markup=back_keyboard()
-            )
-            return
-
-        reward = random.choice([50, 100, 100, 200, 200, 500, 1000, 0])
-        me["balance"] += reward
-        me["last_spin"] = now
-        save(data)
-
-        if reward == 0:
-            msg = "😢 You spin and win 0 coins. Try again!"
+    if query.data == "verify_join":
+        if await check_joined(context, user.id):
+            await query.edit_message_text("✅ Verified! Tap /start to continue.")
         else:
-            msg = f"🎉 You spin and win {reward} coins!"
-
-        await query.edit_message_text(
-            f"🎡 SPIN RESULT\n\n{msg}\n\n💰 New Balance: {me['balance']} coins",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("🎡 Spin Again", callback_data="spin")],
-                [InlineKeyboardButton("⬅️ Back to Menu", callback_data="menu")]
-            ])
-        )
+            await show_join_message(query, context, is_query=True)
         return
 
-    if query.data == "check_follow":
-        me["followed"] = True
-        save(data)
-        await query.edit_message_text(
-            "✅ Thank you!\n\n"
-            "Your follow confirmation has been recorded.\n\n"
-            "Use the menu to check your balance or withdrawal eligibility.",
-            reply_markup=back_keyboard()
-        )
+    if not await check_joined(context, user.id):
+        await show_join_message(query, context, is_query=True)
         return
 
-    if query.data == "withdraw":
-        if me["balance"] < MIN_WITHDRAWAL:
-            await query.edit_message_text(
-                "❌ WITHDRAWAL NOT AVAILABLE\n\n"
-                f"Your balance: {me['balance']} coins\n"
-                f"Minimum balance: {MIN_WITHDRAWAL} coins",
-                reply_markup=back_keyboard()
-            )
-            return
-        if len(me["referred"]) < MIN_REFERRALS:
-            await query.edit_message_text(
-                "❌ NOT ENOUGH REFERRALS\n\n"
-                f"Your referrals: {len(me['referred'])}\n"
-                f"Required referrals: {MIN_REFERRALS}",
-                reply_markup=back_keyboard()
-            )
-            return
-        if not me["followed"]:
-            await query.edit_message_text(
-                "❌ Please confirm that you have followed all channels first.",
-                reply_markup=back_keyboard()
-            )
-            return
-        await query.edit_message_text(
-            "🎉 CONGRATULATIONS!\n\n"
-            "You qualify for withdrawal!\n\n"
-            "Please contact the administrator privately "
-            "to submit your withdrawal request.",
-            reply_markup=back_keyboard()
-        )
-        return
-
-# =========================
-# DONE COMMAND
-# =========================
-
-async def done(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    data = load()
-    user = update.effective_user
-    me = get_user(data, user.id, user.username or "")
-    me["followed"] = True
-    save(data)
-    await update.message.reply_text(
-        "✅ Follow confirmation recorded!\n\n"
-        "You can now check your balance and withdrawal eligibility."
-    )
-
-# =========================
-# BOT STARTUP
-# =========================
-
-def main():
-    if not TOKEN:
-        raise ValueError("BOT_TOKEN is missing from Render Environment Variables!")
-    app = ApplicationBuilder().token(TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("menu", start))
-    app.add_handler(CommandHandler("done", done))
-    app.add_handler(CallbackQueryHandler(button))
-    print("JK Coins Bot dey run successfully!")
-    app.run_polling()
-
-if __name__ == "__main__":
-    main()
+    # --- MAIN MENU ---
+    if query.data == "back":
+        await query.edit_message_text(f"Balance: {data['balance']} JK Coins", reply_markup=main_menu())
+    elif query.data == "balance":
+        await query.edit_message_text(f
