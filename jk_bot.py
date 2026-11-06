@@ -1,8 +1,10 @@
-import json, random, os
+import json, random, os, time
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, CallbackQueryHandler
 import threading
+import asyncio
 from http.server import BaseHTTPRequestHandler, HTTPServer
+
 TOKEN = os.environ.get("BOT_TOKEN")
 ADMIN_ID = os.environ.get("ADMIN_ID")
 
@@ -29,8 +31,31 @@ def save(data):
 def get_user(data, uid):
     uid = str(uid)
     if uid not in data:
-        data[uid] = {"balance": 0, "spins": 3, "referred": [], "followed": False, "username": ""}
+        data[uid] = {"balance": 0, "spins": 3, "referred": [], "followed": False, "username": "", "last_bonus": 0}
+    if "last_bonus" not in data[uid]:
+        data[uid]["last_bonus"] = 0
     return data[uid]
+
+def get_leaderboard(data):
+    # Sort by referrals count, then balance
+    ranked = sorted(data.items(), key=lambda x: (len(x[1].get("referred", [])), x[1].get("balance", 0)), reverse=True)
+    return ranked[:50]
+
+def main_menu():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🎰 SPIN NOW", callback_data="spin")],
+        [InlineKeyboardButton("🎲 DICE GAME", callback_data="dice")],
+        [InlineKeyboardButton("🪙 COIN FLIP", callback_data="coin_choice")],
+        [InlineKeyboardButton("🔢 LUCKY NUMBER", callback_data="lucky")],
+        [InlineKeyboardButton("🎁 DAILY BONUS", callback_data="daily")],
+        [InlineKeyboardButton("🏆 TOP 50 LEADERBOARD", callback_data="leaderboard")],
+        [InlineKeyboardButton("FOLLOW 5 LINKS", callback_data="tasks")],
+        [InlineKeyboardButton("BALANCE", callback_data="balance")],
+        [InlineKeyboardButton("WITHDRAW", callback_data="withdraw")],
+    ])
+
+def back_menu():
+    return InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ BACK TO MENU", callback_data="menu")]])
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = load()
@@ -55,86 +80,39 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"1. Spin to win till you reach 10000 = 100,000 Naira\n"
         f"2. You get 3 free spins\n"
         f"3. 1 Invite = 1 Extra Spin\n"
-        f"4. Follow 5 links + Refer 5 people before withdraw\n\n"
+        f"4. Follow 5 links + Refer 5 people before withdraw\n"
+        f"5. Top 50 referrers go win prize every month end!\n\n"
         f"Your Invite Link:\nhttps://t.me/{context.bot.username}?start={user.id}"
     )
-    kb = [[InlineKeyboardButton("SPIN NOW", callback_data="spin")],
-          [InlineKeyboardButton("FOLLOW 5 LINKS", callback_data="tasks")],
-          [InlineKeyboardButton("BALANCE", callback_data="balance")],
-          [InlineKeyboardButton("WITHDRAW", callback_data="withdraw")]]
-    await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(kb))
+    await update.message.reply_text(text, reply_markup=main_menu())
 
 async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
     data = load()
     me = get_user(data, q.from_user.id)
-    if q.data == "spin":
-        if me["spins"] <= 0:
-            await q.edit_message_text(f"No spin left! Invite 1 person = 1 spin.\nYour link: https://t.me/{context.bot.username}?start={q.from_user.id}")
-            return
-        me["spins"] -= 1
-        win = random.randint(100, 800)
-        me["balance"] += win
-        save(data)
-        await q.edit_message_text(f"You spin... You win +{win} points!\n\nBalance: {me['balance']} / 10000\nSpins Left: {me['spins']}", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("SPIN AGAIN", callback_data="spin")]]))
-    elif q.data == "tasks":
-        txt = "Follow all 5 links, then come back:\n\n"
-        for i, l in enumerate(LINKS, 1):
-            txt += f"{i}. {l}\n"
-        txt += "\nAfter you follow all, type /done"
-        await q.edit_message_text(txt)
-    elif q.data == "balance":
-        await q.edit_message_text(f"Balance: {me['balance']} / 10000\nSpins: {me['spins']}\nReferrals: {len(me['referred'])} / 5")
-    elif q.data == "withdraw":
-        if me["balance"] < 10000:
-            await q.edit_message_text(f"You never reach 10000 yet. You get {me['balance']}. Keep spinning!")
-            return
-        if len(me["referred"]) < 5:
-            await q.edit_message_text(f"You need 5 referrals to withdraw. You get {len(me['referred'])} now.")
-            return
-        if not me["followed"]:
-            await q.edit_message_text("You never follow the 5 links yet. Click FOLLOW 5 LINKS, follow all, then type /done")
-            return
-        await q.edit_message_text("You don qualify! Send your account details like this:\n\nBank - Account Number - Account Name\n\nExample: Opay - 1234567890 - John Doe")
 
-async def done(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    data = load()
-    me = get_user(data, update.effective_user.id)
-    me["followed"] = True
-    save(data)
-    await update.message.reply_text("Good! We don mark say you don follow the 5 links. Now go spin and refer.")
-
-import asyncio
-class Handler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b"JK Bot is alive!")
-    def log_message(self, *args):
-        pass
-
-def keep_alive():
-    port = int(os.environ.get("PORT", 10000))
-    HTTPServer(("0.0.0.0", port), Handler).serve_forever()
-    
-async def main():
-    if not TOKEN:
-        print("ERROR: BOT_TOKEN no dey for Environment Variables")
+    if q.data == "menu":
+        await q.edit_message_text(f"JK SPIN BOT Menu\n\nBalance: {me['balance']} / 10000\nSpins Left: {me['spins']}\nReferrals: {len(me['referred'])} / 5", reply_markup=main_menu())
         return
-    threading.Thread(target=keep_alive, daemon=True).start()
-    app = ApplicationBuilder().token(TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("done", done))
-    app.add_handler(CallbackQueryHandler(button))
-    print("Bot dey run...")
-    await app.initialize()
-    await app.start()
-    await app.updater.start_polling()
-    await asyncio.Event().wait()
 
-if __name__ == "__main__":
-    asyncio.run(main())
-
-if __name__ == "__main__":
-    main()
+    if q.data == "leaderboard":
+        ranked = get_leaderboard(data)
+        # Find my position
+        my_pos = 0
+        for i, (uid, u) in enumerate(ranked, 1):
+            if uid == str(q.from_user.id):
+                my_pos = i
+                break
+        # Top 10 show for first page, then prize info
+        txt = "🏆 TOP 50 LEADERBOARD — Most Referrals\n"
+        txt += "Month End Prizes:\n🥇 1st = +5000 coins\n🥈 2nd = +3000 coins\n🥉 3rd = +2000 coins\n🏅 4th-10th = +500 coins\n\n"
+        medals = ["🥇","🥈","🥉"]
+        for i, (uid, u) in enumerate(ranked[:20], 1):
+            name = u.get("username") or f"User {uid[:4]}"
+            medal = medals[i-1] if i <= 3 else f"{i}."
+            txt += f"{medal} @{name} — {len(u.get('referred', []))} invites — {u.get('balance',0)} coins\n"
+        if len(ranked) > 20:
+            txt += f"\n... and {len(ranked)-20} more people for Top 50\n"
+        if my_pos:
+            txt += f"\n👉 You dey #{my_pos} with {len
