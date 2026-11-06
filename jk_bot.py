@@ -1,8 +1,9 @@
-import json, random, os
+ import json, random, os
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, CallbackQueryHandler
 
 TOKEN = os.environ.get("BOT_TOKEN")
+ADMIN_ID = os.environ.get("ADMIN_ID")
 
 LINKS = [
     "https://whatsapp.com/channel/0029VbEN1ghKbYMV6vRhr407",
@@ -104,6 +105,9 @@ async def done(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Good! We don mark say you don follow the 5 links. Now go spin and refer.")
 
 def main():
+    if not TOKEN:
+        print("ERROR: BOT_TOKEN no dey for Environment Variables")
+        return
     app = ApplicationBuilder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("done", done))
