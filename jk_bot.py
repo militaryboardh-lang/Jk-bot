@@ -104,7 +104,9 @@ async def done(update: Update, context: ContextTypes.DEFAULT_TYPE):
     save(data)
     await update.message.reply_text("Good! We don mark say you don follow the 5 links. Now go spin and refer.")
 
-def main():
+import asyncio
+
+async def main():
     if not TOKEN:
         print("ERROR: BOT_TOKEN no dey for Environment Variables")
         return
@@ -113,7 +115,13 @@ def main():
     app.add_handler(CommandHandler("done", done))
     app.add_handler(CallbackQueryHandler(button))
     print("Bot dey run...")
-    app.run_polling()
+    await app.initialize()
+    await app.start()
+    await app.updater.start_polling()
+    await asyncio.Event().wait()
+
+if __name__ == "__main__":
+    asyncio.run(main())
 
 if __name__ == "__main__":
     main()
