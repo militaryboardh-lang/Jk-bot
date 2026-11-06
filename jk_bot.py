@@ -27,7 +27,7 @@ MIN_REFERRALS = 5
 # =========================
 
 LINKS = [
-    "https://whatsapp.com/channel/0029Vb...",
+    "https://whatsapp.com/channel/0029VbEN1ghKbYMV6vRhr407",
     "https://t.me/jk_coins",
     "https://youtube.com/@jungkookjeon...",
     "https://www.tiktok.com/@justmeet...",
