@@ -256,4 +256,24 @@ async def leaderboard_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     txt = "TOP 50 LEADERBOARD\n\n"
     for i, (uid, u) in enumerate(ranked[:10], 1):
         name = u.get("username") or ("User " + uid[:4])
-        txt += str(i) + ". @" + str(name) + " - " + str(len(u.get("referred", []
+        refs = len(u.get("referred", []))
+        txt += str(i) + ". @" + str(name) + " - " + str(refs) + " invites\n"
+    await update.message.reply_text(txt)
+
+async def main():
+    if not TOKEN:
+        print("ERROR: BOT_TOKEN no dey!")
+        return
+    app = ApplicationBuilder().token(TOKEN).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("done", done))
+    app.add_handler(CommandHandler("leaderboard", leaderboard_cmd))
+    app.add_handler(CallbackQueryHandler(button))
+    print("Bot dey run...")
+    await app.initialize()
+    await app.start()
+    await app.updater.start_polling()
+    await asyncio.Event().wait()
+
+if __name__ == "__main__":
+    asyncio.run(main())
