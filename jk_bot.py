@@ -27,17 +27,50 @@ LINKS = [
     "https://t.me/update_3334",
 ]
 
-DB_FILE = "users.json"
+# --- NEW SAVE UPDATE: PERSISTENT STORAGE ---
+# If Render Disk dey for /var/data, use am. If not, use normal folder.
+DATA_DIR = "/var/data" if os.path.exists("/var/data") else "."
+DB_FILE = os.path.join(DATA_DIR, "users.json")
+# Lock to prevent 2 saves at same time from corrupting file
+_save_lock = threading.Lock()
 
 def load():
-    if os.path.exists(DB_FILE):
-        with open(DB_FILE) as f:
-            return json.load(f)
+    try:
+        if os.path.exists(DB_FILE):
+            with open(DB_FILE) as f:
+                data = json.load(f)
+                # Make sure na dict
+                if isinstance(data, dict):
+                    return data
+    except Exception as e:
+        print(f"Load error: {e} - starting with empty, trying backup")
+        # Try backup if main file corrupt
+        try:
+            if os.path.exists(DB_FILE + ".bak"):
+                with open(DB_FILE + ".bak") as f:
+                    return json.load(f)
+        except:
+            pass
     return {}
 
 def save(data):
-    with open(DB_FILE, "w") as f:
-        json.dump(data, f)
+    with _save_lock:
+        try:
+            os.makedirs(DATA_DIR, exist_ok=True)
+            # 1. Save to temp file first
+            tmp = DB_FILE + ".tmp"
+            with open(tmp, "w") as f:
+                json.dump(data, f)
+            # 2. Keep backup of old file
+            if os.path.exists(DB_FILE):
+                try:
+                    os.replace(DB_FILE, DB_FILE + ".bak")
+                except:
+                    pass
+            # 3. Replace main file with temp - atomic, no corrupt
+            os.replace(tmp, DB_FILE)
+        except Exception as e:
+            print(f"Save error: {e}")
 
 def get_user(data, uid):
     uid = str(uid)
@@ -235,59 +268,3 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await q.edit_message_text("You don collect today already! Come back in " + str(left) + " hours.", reply_markup=back_menu())
         else:
             me["balance"] += 50
-            me["last_bonus"] = now
-            save(data)
-            await q.edit_message_text("Daily Bonus! +50 coins!\nBalance: " + str(me["balance"]) + " / 10000", reply_markup=back_menu())
-        return
-    elif q.data == "balance":
-        await q.edit_message_text("Balance: " + str(me["balance"]) + " / 10000\nSpins: " + str(me["spins"]) + "\nReferrals: " + str(len(me["referred"])) + " / 5", reply_markup=back_menu())
-    elif q.data == "withdraw":
-        if me["balance"] < 10000:
-            await q.edit_message_text("You never reach 10000 yet. You get " + str(me["balance"]) + ". Keep spinning!", reply_markup=back_menu())
-            return
-        if len(me["referred"]) < 5:
-            await q.edit_message_text("You need 5 referrals to withdraw. You get " + str(len(me["referred"])) + " now.", reply_markup=back_menu())
-            return
-        if not me["followed"]:
-            await q.edit_message_text("You never follow the 5 links yet. Click FOLLOW 5 LINKS, follow all, then type /done", reply_markup=back_menu())
-            return
-        await q.edit_message_text("You don qualify! Send your account details like this:\n\nBank - Account Number - Account Name\n\nExample: Opay - 1234567890 - John Doe", reply_markup=back_menu())
-
-async def done(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    data = load()
-    me = get_user(data, update.effective_user.id)
-    me["followed"] = True
-    save(data)
-    await update.message.reply_text("Good! We don mark say you don follow the 5 links. Now you still need 5 referrals to unlock. Send /start to check.")
-
-async def leaderboard_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    data = load()
-    me = get_user(data, update.effective_user.id)
-    if is_locked(me):
-        await update.message.reply_text("LOCKED! Follow 5 links + Refer 5 people first. Send /start")
-        return
-    ranked = get_leaderboard(data)
-    txt = "TOP 50 LEADERBOARD\n\n"
-    for i, (uid, u) in enumerate(ranked[:10], 1):
-        name = u.get("username") or ("User " + uid[:4])
-        refs = len(u.get("referred", []))
-        txt += str(i) + ". @" + str(name) + " - " + str(refs) + " invites\n"
-    await update.message.reply_text(txt)
-
-async def main():
-    if not TOKEN:
-        print("ERROR: BOT_TOKEN no dey!")
-        return
-    app = ApplicationBuilder().token(TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("done", done))
-    app.add_handler(CommandHandler("leaderboard", leaderboard_cmd))
-    app.add_handler(CallbackQueryHandler(button))
-    print("Bot dey run...")
-    await app.initialize()
-    await app.start()
-    await app.updater.start_polling()
-    await asyncio.Event().wait()
-
-if __name__ == "__main__":
-    asyncio.run(main())
