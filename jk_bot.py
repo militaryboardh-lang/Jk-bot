@@ -18,7 +18,7 @@ def keep_alive():
     threading.Thread(target=server.serve_forever, daemon=True).start()
 keep_alive()
 
-TOKEN = "PASTE_YOUR_BOT_TOKEN_HERE"
+TOKEN = "9218454434:AAGCY-A8JV7JRZvbzZjAGhbKGd0uWgYRdP0"
 SUPABASE_URL = "https://ilwllhmxugtyrztybyer.supabase.co"
 SUPABASE_KEY = "sb_publishable__N4Wb0jaK1zD2ZGWwxEMvA_-jCeCN7j"
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
